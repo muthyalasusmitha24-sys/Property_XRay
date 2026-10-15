@@ -2,28 +2,28 @@
 wellness_engine.py  --  Property X-Ray : Wellness Score engine
 =================================================================
 Pipeline (applied independently to each of the 9 wellness factors):
-
+ 
     Raw parameters -> Cleaning -> Normalisation -> Correlation matrix
     -> Factor analysis -> Factor loadings -> Entropy weighting
     -> Bootstrap validation -> Parameter weights -> Sub-factor scores
     -> Explained-variance weights -> Factor score
     -> Confidence interval
-
+ 
 Then the 9 factor scores are combined into the overall Wellness Score
 (equal / buyer-profile / data-driven weights) with a confidence interval.
 """
 from __future__ import annotations
-
+ 
 import warnings
 from dataclasses import dataclass, field
-
+ 
 import numpy as np
 import pandas as pd
 from scipy import stats
 from sklearn.decomposition import FactorAnalysis
-
+ 
 warnings.filterwarnings("ignore")
-
+ 
 # --------------------------------------------------------------------------
 # 1. HIERARCHY  (taken from the Wellness Score diagram)
 # --------------------------------------------------------------------------
@@ -86,7 +86,7 @@ HIERARCHY: dict[str, dict] = {
         "Tax & Financial Documents": ["Property tax receipt", "Utility bills", "Financial statements"],
         "Government Verifications": ["Aadhaar / PAN", "KYC documents", "Other clearances"]}},
 }
-
+ 
 # Parameters where a HIGHER raw value is WORSE (direction = "lower").
 # Everything else is "higher is better".  Editable in the app.
 LOWER_IS_BETTER = {
@@ -98,7 +98,7 @@ LOWER_IS_BETTER = {
             "Noise levels (dB)", "Traffic noise", "Industrial noise"},
     "FIN": {"Property price", "Maintenance cost", "Utility cost", "Break-even"},
 }
-
+ 
 # Realistic units for the synthetic data generator (default = 0-100 score)
 SYN_RANGES = {
     "EMO: Noise levels": (35, 90),
@@ -116,7 +116,7 @@ SYN_RANGES = {
     "FIN: Occupancy rate": (50, 100), "FIN: Debt coverage": (0.8, 3),
     "FIN: Appreciation": (1, 15),
 }
-
+ 
 BUYER_PROFILES = {
     "Balanced (equal weights)": dict(EMO=1, PHY=1, SOC=1, OCC=1, ENV=1, INT=1, SPI=1, FIN=1, STA=1),
     "Young family": dict(EMO=1.0, PHY=1.2, SOC=1.3, OCC=0.8, ENV=1.3, INT=1.4, SPI=0.7, FIN=1.0, STA=1.2),
@@ -124,12 +124,12 @@ BUYER_PROFILES = {
     "Working professional": dict(EMO=1.0, PHY=1.0, SOC=0.9, OCC=1.6, ENV=1.0, INT=0.8, SPI=0.6, FIN=1.2, STA=1.0),
     "Investor": dict(EMO=0.3, PHY=0.6, SOC=0.6, OCC=1.0, ENV=0.8, INT=0.5, SPI=0.3, FIN=2.0, STA=1.6),
 }
-
-
+ 
+ 
 def col_name(code: str, label: str) -> str:
     return f"{code}: {label}"
-
-
+ 
+ 
 def default_config() -> pd.DataFrame:
     """One row per parameter: factor, sub-factor, direction, optional benchmark min / max."""
     rows = []
@@ -142,8 +142,8 @@ def default_config() -> pd.DataFrame:
                                  Direction="lower" if lab in lower else "higher",
                                  Min=np.nan, Max=np.nan))
     return pd.DataFrame(rows)
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # 2. SYNTHETIC DATA  (100 rows x all parameter columns, with a latent structure)
 # --------------------------------------------------------------------------
@@ -177,8 +177,8 @@ def generate_sample_data(n: int = 100, seed: int = 42, messy: bool = True) -> pd
             lo, hi = SYN_RANGES.get(c, (0, 100))
             df.loc[out, c] = hi + 2 * (hi - lo)
     return df
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # 3. STATISTICAL HELPERS
 # --------------------------------------------------------------------------
@@ -199,8 +199,8 @@ def kmo_bartlett(R: np.ndarray, n: int) -> dict:
     except Exception:
         kmo, chi2, pval = np.nan, np.nan, np.nan
     return dict(kmo=kmo, bartlett_chi2=chi2, bartlett_p=pval)
-
-
+ 
+ 
 def entropy_weights(X: np.ndarray) -> np.ndarray:
     """Shannon-entropy objective weights. X: n x p, non-negative (0-100 scores)."""
     n, p = X.shape
@@ -210,8 +210,8 @@ def entropy_weights(X: np.ndarray) -> np.ndarray:
     d = 1 - e
     s = d.sum()
     return d / s if s > 1e-12 else np.full(p, 1 / p)
-
-
+ 
+ 
 def _ev_weights(S: np.ndarray) -> np.ndarray:
     """Explained-variance weights: PCA on the (standardised) score matrix, keep Kaiser
     components (eigenvalue > 1); weight_j ∝ Σ_k EVR_k * v_jk^2."""
@@ -234,8 +234,8 @@ def _ev_weights(S: np.ndarray) -> np.ndarray:
     wt = (evecs[:, :k] ** 2 * evr[:k]).sum(axis=1)
     w[act] = wt / wt.sum()
     return w
-
-
+ 
+ 
 def _derive(X: np.ndarray, alpha: float, kmax: int) -> dict:
     """Steps: correlation -> factor analysis -> loadings -> entropy -> combined weights."""
     n, p = X.shape
@@ -265,8 +265,8 @@ def _derive(X: np.ndarray, alpha: float, kmax: int) -> dict:
     comm[active] = h
     return dict(w=comb, w_load=w_load, w_ent=w_ent, L=Lfull, k=k, eig=eig, R=R,
                 active=active, comm=comm)
-
-
+ 
+ 
 def _sub_scores(X: np.ndarray, w: np.ndarray, groups: list[np.ndarray]) -> np.ndarray:
     cols = []
     for g in groups:
@@ -274,8 +274,8 @@ def _sub_scores(X: np.ndarray, w: np.ndarray, groups: list[np.ndarray]) -> np.nd
         tot = wg.sum()
         cols.append((X[:, g] * wg).sum(1) / tot if tot > 1e-12 else X[:, g].mean(1))
     return np.column_stack(cols)
-
-
+ 
+ 
 def band(score: float) -> str:
     if score >= 80:
         return "Excellent"
@@ -286,13 +286,13 @@ def band(score: float) -> str:
     if score >= 35:
         return "Below average"
     return "Poor"
-
-
+ 
+ 
 def _ci(boot: np.ndarray, level: float):
     a = (1 - level) / 2 * 100
     return np.percentile(boot, a, axis=0), np.percentile(boot, 100 - a, axis=0)
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # 4. FACTOR RESULT
 # --------------------------------------------------------------------------
@@ -321,7 +321,7 @@ class FactorResult:
     diagnostics: dict
     flags: list = field(default_factory=list)
     id_col: pd.Series | None = None
-
+ 
     # ----- scoring -----
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         num = df[self.columns].apply(pd.to_numeric, errors="coerce")
@@ -337,7 +337,7 @@ class FactorResult:
         lower = (self.norm_stats["direction"].reindex(self.columns) == "lower").values
         x[:, lower] = 100 - x[:, lower]
         return pd.DataFrame(x, columns=self.columns, index=df.index)
-
+ 
     def apply(self, Xn: pd.DataFrame) -> dict:
         """Score already-normalised rows with the fitted weights."""
         groups = [np.array([self.columns.index(c) for c in cols]) for cols in self.sub_map.values()]
@@ -351,15 +351,15 @@ class FactorResult:
             boot[b] = _sub_scores(X, self.boot_w[b], groups) @ self.boot_subw[b]
         return dict(sub_scores=pd.DataFrame(S, columns=list(self.sub_map), index=Xn.index),
                     score=pd.Series(score, index=Xn.index), boot=boot)
-
+ 
     def ci(self, level: float = 0.95):
         if len(self.boot_scores) == 0:
             return self.score.copy(), self.score.copy()
         lo, hi = _ci(self.boot_scores, level)
         return (pd.Series(np.minimum(lo, self.score), index=self.score.index),
                 pd.Series(np.maximum(hi, self.score), index=self.score.index))
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # 5. FIT ONE FACTOR
 # --------------------------------------------------------------------------
@@ -377,7 +377,7 @@ def fit_factor(df: pd.DataFrame, code: str, config: pd.DataFrame, boot_idx: np.n
             sub_map[sub] = cols
     n = len(df)
     raw = df[columns].apply(pd.to_numeric, errors="coerce")
-
+ 
     # ---- Step 2: CLEANING (coerce numeric, Tukey-fence winsorising, median imputation)
     q1, q3 = raw.quantile(.25), raw.quantile(.75)
     iqr = q3 - q1
@@ -389,7 +389,7 @@ def fit_factor(df: pd.DataFrame, code: str, config: pd.DataFrame, boot_idx: np.n
         "outliers_clipped": ((raw < fence_lo) | (raw > fence_hi)).sum()}, index=columns)
     cleaned = raw.fillna(clean_stats["median"])
     cleaned = pd.DataFrame(np.clip(cleaned.values, fence_lo, fence_hi), columns=columns, index=df.index)
-
+ 
     # ---- Step 3: NORMALISATION (min-max 0-100, direction aware, optional benchmark bounds)
     cfg_i = cfg.set_index("Column")
     mn = cfg_i["Min"].reindex(columns).astype(float)
@@ -403,16 +403,16 @@ def fit_factor(df: pd.DataFrame, code: str, config: pd.DataFrame, boot_idx: np.n
     Xn = ((cleaned - nmin) / rng_ * 100).fillna(50).clip(0, 100)
     lower_cols = [c for c in columns if norm_stats.loc[c, "direction"] == "lower"]
     Xn[lower_cols] = 100 - Xn[lower_cols]
-
+ 
     X = Xn.values
     p = X.shape[1]
     groups = [np.array([columns.index(c) for c in cols]) for cols in sub_map.values()]
-
+ 
     # ---- Steps 4-8: correlation, FA, loadings, entropy (base fit on full data)
     base = _derive(X, alpha, kmax)
     corr = pd.DataFrame(np.corrcoef(X, rowvar=False), index=columns, columns=columns).fillna(0)
     diag = kmo_bartlett(base["R"], n)
-
+ 
     # ---- Step 9: BOOTSTRAP VALIDATION
     B = len(boot_idx)
     boot_w = np.zeros((B, p))
@@ -436,12 +436,12 @@ def fit_factor(df: pd.DataFrame, code: str, config: pd.DataFrame, boot_idx: np.n
         wstd = boot_w.std(0)
     else:
         w_final, wlo, whi, wstd = base["w"], base["w"], base["w"], np.zeros(p)
-
+ 
     # ---- Steps 10-13: parameter weights -> sub-factor scores -> EV weights -> factor score
     S = _sub_scores(X, w_final, groups)
     sw_final = _ev_weights(S)
     score = S @ sw_final
-
+ 
     short = [c.split(": ", 1)[1] for c in columns]
     weights = pd.DataFrame({
         "parameter": short,
@@ -465,8 +465,8 @@ def fit_factor(df: pd.DataFrame, code: str, config: pd.DataFrame, boot_idx: np.n
         boot_w=boot_w, boot_subw=boot_subw, diagnostics=diag)
     result.flags = diagnose(result, n)
     return result
-
-
+ 
+ 
 def diagnose(r: FactorResult, n: int) -> list:
     """Automatic flaw detector -> list of (severity, message)."""
     flags, p = [], len(r.columns)
@@ -514,8 +514,8 @@ def diagnose(r: FactorResult, n: int) -> list:
     if width > 15:
         flags.append(("medium", f"Average 95% CI width is {width:.1f} points – scores are imprecise."))
     return flags
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # 6. RUN ALL FACTORS + OVERALL SCORE
 # --------------------------------------------------------------------------
@@ -529,8 +529,8 @@ def run_all(df: pd.DataFrame, config: pd.DataFrame, alpha: float = 0.5, B: int =
         if r is not None:
             out[code] = r
     return out
-
-
+ 
+ 
 def combine_overall(results: dict, factor_weights: dict | None, level: float = 0.95):
     """factor_weights=None -> data-driven explained-variance weights across factors."""
     codes = list(results)
@@ -549,8 +549,8 @@ def combine_overall(results: dict, factor_weights: dict | None, level: float = 0
     else:
         lo = hi = overall.values
     return F, pd.Series(w, index=codes, name="weight"), overall, pd.Series(lo, index=F.index), pd.Series(hi, index=F.index)
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # 7. EXPLANATIONS
 # --------------------------------------------------------------------------
@@ -584,8 +584,8 @@ def explain_factor(r: FactorResult, level: float = 0.95) -> str:
     else:
         L.append("**No automatic data-quality flags raised.**")
     return "\n\n".join(L)
-
-
+ 
+ 
 def explain_property(results: dict, F: pd.DataFrame, fw: pd.Series, overall: pd.Series,
                      lo: pd.Series, hi: pd.Series, row, profile: str, level: float = 0.95) -> str:
     L = [f"### Property {row}: Wellness Score **{overall[row]:.1f}** "
@@ -609,23 +609,28 @@ def explain_property(results: dict, F: pd.DataFrame, fw: pd.Series, overall: pd.
     L.append("**Biggest drags on the score (weight × shortfall):** " + "; ".join(
         f"{c} (normalised {v:.0f}/100)" for c, _, v in drags[:5]))
     return "\n\n".join(L)
-
-
+ 
+ 
 def llm_explain(context: str, token: str, model: str, question: str = "") -> str:
-    """Ask a Hugging Face hosted LLM to narrate the derivation and critique it."""
-    from huggingface_hub import InferenceClient
-    client = InferenceClient(model=model, token=token, timeout=120)
+    """Ask a Groq-hosted LLM (OpenAI-compatible API) to narrate the derivation and critique it."""
+    import requests
     system = ("You are a careful data-science reviewer for a property-wellness scoring system. "
               "Explain, in plain language for a property buyer, how the score was derived from the facts "
               "provided. Then give a short critique: possible methodological weaknesses and what to check. "
               "Use ONLY the numbers in the context; never invent values.")
     user = f"CONTEXT:\n{context}\n\nTASK: {question or 'Explain the derivation and highlight any flaws.'}"
-    resp = client.chat_completion(messages=[{"role": "system", "content": system},
-                                            {"role": "user", "content": user}],
-                                  max_tokens=1200, temperature=0.2)
-    return resp.choices[0].message.content
-
-
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={"model": model,
+              "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+              "max_tokens": 1200, "temperature": 0.2},
+        timeout=120)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Groq API error {resp.status_code}: {resp.text[:400]}")
+    return resp.json()["choices"][0]["message"]["content"]
+ 
+ 
 def score_new(results: dict, df_new: pd.DataFrame, factor_weights, level: float = 0.95):
     """Score NEW properties with the already-fitted model (cleaning stats, normalisation bounds,
     parameter weights, sub-factor weights, bootstrap weights).
