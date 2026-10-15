@@ -4,16 +4,16 @@ Run:  streamlit run app.py
 """
 import io
 import os
-
+ 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-
+ 
 import theme as T
 import wellness_engine as we
-
+ 
 st.set_page_config(page_title="Property X-Ray – Wellness Score", page_icon="🏠", layout="wide")
 T.inject()
 T.hero("Wellness Score",
@@ -21,41 +21,41 @@ T.hero("Wellness Score",
        "from raw parameters to a final score with a confidence interval.",
        ["Clean", "Normalise", "Correlate", "Factor analysis", "Entropy", "Bootstrap", "Weights",
         "Sub-factor scores", "Factor scores", "Wellness Score + CI"])
-
-
+ 
+ 
 # ------------------------------------------------------------------ helpers
 def get_token():
     try:
-        t = st.secrets.get("HF_TOKEN")
+        t = st.secrets.get("GROQ_API_KEY")
     except Exception:
         t = None
-    return t or os.environ.get("HF_TOKEN") or st.session_state.get("hf_token_input") or ""
-
-
+    return t or os.environ.get("GROQ_API_KEY") or st.session_state.get("groq_key_input") or ""
+ 
+ 
 @st.cache_data(show_spinner=False)
 def cached_sample(n, seed):
     return we.generate_sample_data(n, seed)
-
-
+ 
+ 
 @st.cache_data(show_spinner=False)
 def cached_run(df, cfg, alpha, B, seed):
     return we.run_all(df, cfg, alpha, B, seed)
-
-
+ 
+ 
 def read_upload(file):
     if file.name.lower().endswith((".xlsx", ".xls")):
         return pd.read_excel(file)
     return pd.read_csv(file)
-
-
+ 
+ 
 def short(c):
     return c.split(": ", 1)[1] if ": " in c else c
-
-
+ 
+ 
 def to_csv(df):
     return df.to_csv().encode("utf-8")
-
-
+ 
+ 
 # ------------------------------------------------------------------ sidebar
 with st.sidebar:
     T.sidebar_brand()
@@ -77,14 +77,14 @@ with st.sidebar:
         for code, f in we.HIERARCHY.items():
             custom_w[code] = st.slider(f["name"], 0.0, 3.0, 1.0, 0.1)
     st.divider()
-    st.subheader("LLM explanation (Hugging Face)")
-    if not (get_token() and not st.session_state.get("hf_token_input")):
-        st.text_input("HF token (kept only in this session)", type="password", key="hf_token_input",
-                      help="Better: put HF_TOKEN in .streamlit/secrets.toml or an environment variable.")
-    hf_model = st.text_input("Model", "meta-llama/Llama-3.1-8B-Instruct")
-
+    st.subheader("LLM explanation (Groq)")
+    if not (get_token() and not st.session_state.get("groq_key_input")):
+        st.text_input("Groq API key (kept only in this session)", type="password", key="groq_key_input",
+                      help="Better: put GROQ_API_KEY in Streamlit Secrets or an environment variable.")
+    hf_model = st.text_input("Model", "llama-3.3-70b-versatile")
+ 
 tabs = st.tabs(["Data", "Factor pipeline", "Overall score", "Score new property", "Explanation", "Method"])
-
+ 
 # ------------------------------------------------------------------ TAB 0: data
 cfg_base = we.default_config()
 with tabs[0]:
@@ -111,7 +111,7 @@ with tabs[0]:
         df.index = [f"P{i + 1:03d}" for i in range(len(df))]
     T.section("Data preview", "First 20 rows of the reference dataset")
     st.dataframe(df.head(20), width="stretch")
-
+ 
     match = (cfg_base.assign(found=cfg_base["Column"].isin(df.columns))
              .groupby(["Code", "Factor"]).agg(columns_found=("found", "sum"), columns_expected=("found", "size"))
              .reset_index())
@@ -130,7 +130,7 @@ with tabs[0]:
     if match["columns_found"].sum() == 0:
         st.error("No matching columns found – check the template.")
         st.stop()
-
+ 
 # ------------------------------------------------------------------ run engine
 with st.spinner("Running the full pipeline (factor analysis + bootstrap) – cached after the first run…"):
     results = cached_run(df, cfg, float(alpha), int(B), 7)
@@ -145,7 +145,7 @@ else:
     pw = we.BUYER_PROFILES[profile]
 F, fw, overall, o_lo, o_hi = we.combine_overall(results, pw, level)
 names = {c: r.name for c, r in results.items()}
-
+ 
 # ------------------------------------------------------------------ TAB 1: pipeline
 with tabs[1]:
     code = st.selectbox("Wellness factor", list(results), format_func=lambda c: f"{c} – {names[c]}",
@@ -162,7 +162,7 @@ with tabs[1]:
         with st.expander(f"{len(r.flags)} possible flaw(s) detected", expanded=True):
             for s, msg in r.flags:
                 T.flag(s, msg)
-
+ 
     with st.expander("1 · Raw parameters", expanded=False):
         st.dataframe(r.raw.rename(columns=short).head(25), width="stretch")
     with st.expander("2 · Cleaning (median imputation + Tukey-fence winsorising)"):
@@ -239,7 +239,7 @@ with tabs[1]:
         fig.update_xaxes(range=[0, 100])
         T.show(fig, c1)
         c2.dataframe(T.style_df(tbl.sort_values("Factor score", ascending=False), 2), width="stretch", height=320)
-
+ 
 # ------------------------------------------------------------------ TAB 2: overall
 with tabs[2]:
     T.section("Overall Wellness Score", f"Weighting profile: {profile}  ·  {level:.0%} confidence interval")
@@ -277,7 +277,7 @@ with tabs[2]:
     T.show(fig)
     st.dataframe(T.style_df(out), width="stretch", height=400)
     st.download_button("⬇ Download all scores (CSV)", to_csv(out), "wellness_scores.csv")
-
+ 
     st.divider()
     T.section("Single property drill-down", "Compare one property against the dataset average")
     pid = st.selectbox("Property", list(F.index))
@@ -299,7 +299,7 @@ with tabs[2]:
                     unsafe_allow_html=True)
     st.markdown("#### Why this score?")
     st.markdown(we.explain_property(results, F, fw, overall, o_lo, o_hi, pid, profile, level))
-
+ 
 # ------------------------------------------------------------------ TAB 3: new property
 with tabs[3]:
     T.section("Score new properties", "Apply the fitted model to properties outside the reference set")
@@ -336,7 +336,7 @@ with tabs[3]:
         with st.expander("Sub-factor scores for the first property"):
             st.dataframe(T.style_df(sub_df), hide_index=True, width="stretch")
         st.download_button("⬇ Download (CSV)", to_csv(res_tbl), "new_property_scores.csv")
-
+ 
 # ------------------------------------------------------------------ TAB 4: explanation
 with tabs[4]:
     T.section("How was the score derived?", "Plain-language walk-through of the calculation")
@@ -352,21 +352,21 @@ with tabs[4]:
             text += "\n\n**Data-quality flags across factors:**\n" + "\n".join(f"- {f}" for f in flags[:15])
     st.markdown(text)
     st.divider()
-    st.markdown("#### AI narrative + critique (Hugging Face)")
+    st.markdown("#### AI narrative + critique (Groq)")
     q = st.text_input("Optional question for the model", "")
     if st.button("Generate AI explanation", type="primary"):
         tok = get_token()
         if not tok:
-            st.warning("Add your Hugging Face token in the sidebar, in `.streamlit/secrets.toml` (HF_TOKEN), "
+            st.warning("Add your Groq API key in the sidebar, in Streamlit Secrets (GROQ_API_KEY), "
                        "or as an environment variable.")
         else:
             with st.spinner("Asking the model…"):
                 try:
                     st.markdown(we.llm_explain(text, tok, hf_model, q))
                 except Exception as e:
-                    st.error(f"LLM call failed: {e}\n\nCheck the token, that the model is available to your account "
-                             "(some models are gated), or try another model name.")
-
+                    st.error(f"LLM call failed: {e}\n\nCheck the API key, your Groq rate limits, "
+                             "or try another model name (e.g. llama-3.1-8b-instant).")
+ 
 # ------------------------------------------------------------------ TAB 5: method
 with tabs[5]:
     st.markdown("""
@@ -391,7 +391,7 @@ with tabs[5]:
     data-driven (explained variance across factors).
 14. **Confidence interval** – each bootstrap weight set is applied to every property; the CI is the percentile
     range of the resulting scores.
-
+ 
 ### Known limitations (read before trusting a number)
 - **Min-max normalisation is relative** to the reference set: a “70” means “better than most of these properties”,
   not an absolute standard. Set benchmark Min/Max (e.g. AQI 0–500, noise 30–100 dB) for absolute scoring.
